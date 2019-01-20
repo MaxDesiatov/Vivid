@@ -1,13 +1,7 @@
 import VividKit
 
-let dir = #file.split(separator: "/").dropLast().joined(separator: "/")
-let v: Vivid
-do {
-  v = try Vivid(nodePath: "\(dir)/../../node_modules")
-} catch {
-  fatalError(String(describing: error))
-}
+let v = try! Vivid()
 
-print(v.highlight(input: """
-  public static func test() { print("blah")}
+print(try! v.highlight(language: "swift", input: """
+public static func test() { print("\\(1 + 3) test")}
 """))
