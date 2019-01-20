@@ -19,8 +19,10 @@ guard let input = input else {
   )
 }
 
-let result = try! Vivid<HTMLHighlighter>().highlight(
+guard let result = try? Vivid<HTMLHighlighter>().highlight(
   language: "swift", input: input
-)
+) else {
+  fatalError("failed to parse given input")
+}
 
 print(result)
