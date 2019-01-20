@@ -1,35 +1,6 @@
 import Foundation
 import JavaScriptCore
 
-let highlighterSource = """
-const CodeMirror = exports;
-function highlightCode(language, value) {
-  const elements = [];
-  let lastStyle = null;
-  let tokenBuf = "";
-  const pushElement = (token, style) => {
-    elements.push(
-      `<span${style ? ` class="cm-${style}"` : ""}>${token}</span>`
-    );
-  };
-  CodeMirror.runMode(value, language, (token, style) => {
-    if (lastStyle === style) {
-      tokenBuf += token;
-      lastStyle = style;
-    } else {
-      if (tokenBuf) {
-        pushElement(tokenBuf, lastStyle);
-      }
-      tokenBuf = token;
-      lastStyle = style;
-    }
-  });
-  pushElement(tokenBuf, lastStyle);
-
-  return elements.join("");
-};
-"""
-
 extension JSContext {
   func setupCommonJS() {
     setObject([:], forKeyedSubscript: "exports" as NSString)
@@ -37,18 +8,61 @@ extension JSContext {
     setObject([
       "cache": NSDictionary(),
       "resolve": JSValue(object: resolve, in: self),
-    ] as [NSString: AnyHashable], forKeyedSubscript: "require" as NSString)
+    ] as NSDictionary, forKeyedSubscript: "require" as NSString)
   }
 }
 
-public final class Vivid {
+public protocol Highlighter {
+  associatedtype Result
+
+  init()
+
+  mutating func consume(token: String, style: String?)
+  mutating func finalize()
+
+  var result: Result { get }
+}
+
+public struct HTMLHighlighter: Highlighter {
+  private var tokenBuffer = ""
+  private var lastStyle: String?
+
+  public var result = ""
+
+  public init() {}
+
+  public mutating func finalize() {
+    if let styleString = lastStyle.flatMap({ " class=\"cm-\($0)\"" }) {
+      result.append("<span\(styleString)>\(tokenBuffer)</span>")
+    } else {
+      result.append(tokenBuffer)
+    }
+  }
+
+  public mutating func consume(token: String, style: String?) {
+    let token = CFXMLCreateStringByEscapingEntities(
+      nil, token as CFString, nil
+    ) as String
+    if lastStyle == style {
+      tokenBuffer.append(token)
+    } else {
+      if !tokenBuffer.isEmpty {
+        finalize()
+      }
+      tokenBuffer = token
+      lastStyle = style
+    }
+  }
+}
+
+public final class Vivid<T: Highlighter> {
   enum Error: Swift.Error {
     case resultUnavailable
   }
 
   private let nodeURL: URL
   private let context = JSContext()!
-  private let highlighter: JSValue
+  private let runMode: JSValue
   private var modes = Set<String>()
 
   public convenience init() throws {
@@ -69,11 +83,11 @@ public final class Vivid {
     let scriptPath = "/codemirror/addon/runmode/runmode.node.js"
     let scriptURL = nodeURL.appendingPathComponent(scriptPath)
     context.evaluateScript(try String(contentsOf: scriptURL))
-    context.evaluateScript(highlighterSource)
-    highlighter = context.evaluateScript("highlightCode")
+    context.evaluateScript("const CodeMirror = exports")
+    runMode = context.evaluateScript("CodeMirror.runMode")
   }
 
-  public func highlight(language: String, input: String) throws -> String {
+  public func highlight(language: String, input: String) throws -> T.Result {
     if !modes.contains(language) {
       let modePath = "/codemirror/mode/\(language)/\(language).js"
       let modeURL = nodeURL.appendingPathComponent(modePath)
@@ -81,10 +95,18 @@ public final class Vivid {
       modes.insert(language)
     }
 
-    guard let result = highlighter.call(
-      withArguments: [language, input]
-    )?.toString() else { throw Error.resultUnavailable }
+    var highlighter = T()
 
-    return result
+    let bridgedConsume: @convention(block) (String, String) -> () = {
+      let style = ["null", "undefined"].contains($1) ? nil : $1
+      highlighter.consume(token: $0, style: style)
+    }
+
+    runMode.call(withArguments: [
+      input, language, JSValue(object: bridgedConsume, in: context),
+    ])
+    highlighter.finalize()
+
+    return highlighter.result
   }
 }

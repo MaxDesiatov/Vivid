@@ -2,8 +2,8 @@ import XCTest
 
 #if !os(macOS)
 public func allTests() -> [XCTestCaseEntry] {
-    return [
-        testCase(VividTests.allTests),
-    ]
+  return [
+    testCase(VividTests.allTests),
+  ]
 }
 #endif
